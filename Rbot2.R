@@ -79,10 +79,9 @@ dev.off()
 ##################################################
 library("plot3D")
 require(geoR)
+## merged file with coodinate and height score
 #h is z score of sd or fold change
 result=kde2d(mt[,3],mt[,4],n=100,h=5)
-test=mt[,1:5]
-test[test$`TCGA-A6-2675-01A`>10,]
 h <-mt[,5]
 hcutoff=5
 h[is.na(h)] <- 0
