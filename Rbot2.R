@@ -76,5 +76,24 @@ pdf("test2.pdf")
 with(s,image(x,y,z,col=mycolor,xlab="",ylab=""),add=TRUE)
 with(s,contour(result,add=T,col = "#a5a298",lwd=0.9,drawlabels = F))
 dev.off()
-
+##################################################
+library("plot3D")
+require(geoR)
+#h is z score of sd or fold change
+result=kde2d(mt[,3],mt[,4],n=100,h=5)
+test=mt[,1:5]
+test[test$`TCGA-A6-2675-01A`>10,]
+h <-mt[,5]
+hcutoff=5
+h[is.na(h)] <- 0
+h[abs(h)<hcutoff] <- 0
+s=interp(mt[,3],mt[,4],log2(h+8),nx=150,ny=150,linear=TRUE,extrap=TRUE,jitter.random = TRUE,jitter = 10^-12, jitter.iter = 6);
+s.min=min(s$z,na.rm=TRUE)
+s.max=max(s$z,na.rm=TRUE)
+breaks=pretty(c(s.min,s.max),20)
+mycolors=jet2.col((length(breaks)))
+#mycolors=c("#004EFFFF","#004EFFFF","#004EFFFF","#004EFFFF",mycolors[1:19])
+#image(matrix(1:23, 23), col = mycolors , axes = FALSE)
+with(s,image(x,y,z,col=mycolors,xlab="",ylab=""),add=TRUE)
+with(s,contour(result,add=T,col = "#a5a298",lwd=0.9,drawlabels = F))
 
