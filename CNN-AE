@@ -1,0 +1,410 @@
+
+# coding: utf-8
+
+# In[17]:
+
+
+
+from scipy import misc
+import glob
+from PIL import Image
+from scipy import ndimage
+import numpy as np;
+
+import os;
+
+cps_size=196
+def img2nparr(img):
+    img = Image.open(img)
+    img = img.resize((cps_size,cps_size));
+    img = img.load();
+    
+    img2 =  np.zeros(shape=(cps_size,cps_size))
+    for i in range(cps_size):
+        for j in range(cps_size):
+            pix = img[i,j];
+            graypix = np.dot([pix[0],pix[1],pix[2]],[0.299, 0.587, 0.114])
+            img2[i,j]=graypix/255;
+     
+    return img2;
+
+
+def getmaplist(study,mapName,patient):
+    imgroot=testpat = "/home/ubuntu/nodejs/project/results/"+study+"/"+mapName+"/"+patient+"/";
+    
+    allpng = os.listdir(imgroot);
+    up=dict();
+    dn=dict();
+    for i in allpng:
+        if i.endswith("_up.png"):
+            temp = img2nparr(imgroot+i);
+            up[i.replace("_up.png","")]=temp;
+            
+        elif i.endswith("_dn.png"):
+            temp = img2nparr(imgroot+i);
+            dn[i.replace("_dn.png","")]=temp;
+            
+
+    
+    return up,dn
+
+
+
+
+
+    
+
+
+# In[18]:
+
+
+####################
+
+
+
+study = "TCGA_BRCA_B38"
+mapName = "TCGA_BRCA_0.71_3082"
+patient = "TCGA_BRCA_Basal"
+
+uppng,dnpng = getmaplist(study,mapName,patient);
+
+
+# In[19]:
+
+
+print(uppng)
+
+
+# In[20]:
+
+
+samples=list(uppng.keys())
+
+
+# In[21]:
+
+
+values=list(uppng.values())
+
+
+# In[22]:
+
+
+values
+
+
+# In[23]:
+
+
+from keras.layers import Input, Conv2D, MaxPooling2D, UpSampling2D, ZeroPadding2D
+from keras.models import Model
+from keras.callbacks import TensorBoard
+from keras.datasets import mnist
+import numpy as np
+
+
+# In[24]:
+
+
+#(x_train, y_train), (x_test, y_test) = mnist.load_data()
+
+
+# In[16]:
+
+
+#x_train_n = x_train.astype('float32') / 255.
+#x_test_n = x_test.astype('float32') / 255.
+
+
+# In[18]:
+
+
+#x_train_n
+
+
+# In[25]:
+
+
+x_train=values
+x_train_noisy=values
+
+
+# In[26]:
+
+
+x_train = np.reshape(values, (len(values), 196, 196, 1))  # adapt this if using `channels_first` image data format
+x_test = np.reshape(values, (len(values), 196, 196, 1))  # adapt this if using `channels_first` image data format
+
+
+
+# In[27]:
+
+
+noise_factor = 0.5
+x_train_noisy = x_train + noise_factor * np.random.normal(loc=0.0, scale=1.0, size=x_train.shape)
+x_test_noisy = x_test + noise_factor * np.random.normal(loc=0.0, scale=1.0, size=x_test.shape)
+
+x_train_noisy = np.clip(x_train_noisy, 0., 1.)
+x_test_noisy = np.clip(x_test_noisy, 0., 1.)
+
+
+# In[28]:
+
+
+x_train_noisy.shape
+
+
+# In[29]:
+
+
+x_test_noisy.shape
+
+
+# In[30]:
+
+
+x_train.shape
+
+
+# In[40]:
+
+
+input_img = Input(shape=(cps_size, cps_size, 1))  # adapt this if using `channels_first` image data format
+x = Conv2D(16, (3, 3), activation='relu', padding='same')(input_img)
+x = MaxPooling2D((2, 2), padding='same')(x)
+x = Conv2D(8, (3, 3), activation='relu', padding='same')(x)
+x = MaxPooling2D((2, 2), padding='same')(x)
+x = Conv2D(8, (3, 3), activation='relu', padding='same')(x)
+encoded = MaxPooling2D((2, 2), padding='same', name='encoder')(x)
+
+# at this point the representation is (4, 4, 8) i.e. 128-dimensional
+
+x = Conv2D(8, (3, 3), activation='relu', padding='same')(encoded)
+x = UpSampling2D((2, 2))(x)
+x = Conv2D(8, (3, 3), activation='relu', padding='same')(x)
+x = UpSampling2D((2, 2))(x)
+x = Conv2D(16, (3, 3), activation='relu')(x)
+x = UpSampling2D((2, 2))(x)
+decoded = Conv2D(1, (3, 3), activation='sigmoid', padding='same')(x)
+
+autoencoder = Model(input_img, decoded)
+autoencoder.compile(optimizer='adadelta', loss='binary_crossentropy')
+encoderX = Model(input_img,encoded)
+autoencoder.fit(x_train_noisy, x_train,
+                epochs=20,
+                batch_size=20,
+                shuffle=True,
+                validation_data=(x_test_noisy, x_test),
+                callbacks=[TensorBoard(log_dir='/tmp/tb', histogram_freq=0, write_graph=False)])
+
+
+# In[41]:
+
+
+bottleneck = encoderX.predict(x_train_noisy,batch_size=20)
+
+
+# In[47]:
+
+
+import matplotlib.pyplot as plt
+#import pyplot as plt
+from sklearn.manifold import TSNE
+plt.figure(figsize=(100,100))
+plt.scatter(bottleneck[:,0],bottleneck[:,1])
+plt.show()
+
+
+# In[56]:
+
+
+imagesize=2
+emb=TSNE(perplexity=30,n_components=2,early_exaggeration=12,learning_rate=200,n_iter=2000,n_iter_without_progress=300,
+        min_grad_norm=1e-07,metric='euclidean',init='random',verbose=0,random_state=None,
+        method='barnes_hut',angle=0.5).fit_transform(bottleneck[3,4])
+plt.scatter(emb[:,0],emb[:,1])
+plt.show()
+
+
+# In[53]:
+
+
+bottleneck[1,2]
+
+
+# In[32]:
+
+
+def train_model():
+    input_img = Input(shape=(cps_size, cps_size, 1))  # adapt this if using `channels_first` image data format
+    x = Conv2D(16, (3, 3), activation='relu', padding='same')(input_img)
+    x = MaxPooling2D((2, 2), padding='same')(x)
+    x = Conv2D(8, (3, 3), activation='relu', padding='same')(x)
+    x = MaxPooling2D((2, 2), padding='same')(x)
+    x = Conv2D(8, (3, 3), activation='relu', padding='same')(x)
+    encoded = MaxPooling2D((2, 2), padding='same', name='encoder')(x)
+
+    # at this point the representation is (4, 4, 8) i.e. 128-dimensional
+
+    x = Conv2D(8, (3, 3), activation='relu', padding='same')(encoded)
+    x = UpSampling2D((2, 2))(x)
+    x = Conv2D(8, (3, 3), activation='relu', padding='same')(x)
+    x = UpSampling2D((2, 2))(x)
+    x = Conv2D(16, (3, 3), activation='relu')(x)
+    x = UpSampling2D((2, 2))(x)
+    decoded = Conv2D(1, (3, 3), activation='sigmoid', padding='same')(x)
+
+    autoencoder = Model(input_img, decoded)
+    autoencoder.compile(optimizer='adadelta', loss='binary_crossentropy')
+    
+    autoencoder.fit(x_train_noisy, x_train,
+                    epochs=20,
+                    batch_size=20,
+                    shuffle=True,
+                    validation_data=(x_test_noisy, x_test),
+                    callbacks=[TensorBoard(log_dir='/tmp/tb', histogram_freq=0, write_graph=False)])
+    
+    autoencoder.save('autoencoder.h5')
+
+train_model()
+
+
+# In[38]:
+
+
+import numpy as np
+from keras.models import Model
+from keras.datasets import mnist
+#import cv2
+from keras.models import load_model
+from sklearn.metrics import label_ranking_average_precision_score
+import time
+autoencoderX = load_model('autoencoder.h5')
+encoderX=Model(input_img,encoded)
+
+
+# In[37]:
+
+
+autoencoderX
+
+
+# In[27]:
+
+
+
+x_train = np.reshape(x_train_n, (len(x_train_n), 28, 28, 1))  # adapt this if using `channels_first` image data format
+x_test = np.reshape(x_test_n, (len(x_test_n), 28, 28, 1))  # adapt this if using `channels_first` image data format
+
+
+noise_factor = 0.5
+x_train_noisy = x_train + noise_factor * np.random.normal(loc=0.0, scale=1.0, size=x_train.shape)
+x_test_noisy = x_test + noise_factor * np.random.normal(loc=0.0, scale=1.0, size=x_test.shape)
+
+x_train_noisy = np.clip(x_train_noisy, 0., 1.)
+x_test_noisy = np.clip(x_test_noisy, 0., 1.)
+
+
+# In[33]:
+
+
+values[1].shape
+
+
+# In[32]:
+
+
+x_train_n[1].shape
+
+
+# In[28]:
+
+
+xtrain = np.reshape(values, (len(values), 28, 28, 1))  # adapt this if using `channels_first` image data format
+xtest = np.reshape(values, (len(values), 28, 28, 1))  # adapt this if using `channels_first` image data format
+
+
+# In[21]:
+
+
+values[1]
+
+
+# In[19]:
+
+
+x_train[1]
+
+
+# In[22]:
+
+
+#### test 
+import keras
+from keras.layers import Dense
+from keras.models import Sequential
+learning_rate = 0.001
+n_epochs = 20
+batch_size = 100
+n_batches = int(mnist.train.num_examples/batch_size)
+
+# number of pixels in the MNIST image as number of inputs
+n_inputs = 784
+n_outputs = n_inputs
+
+# number of hidden layers
+n_layers = 2
+# neurons in each hidden layer
+n_neurons = [512,256]
+# add decoder layers:
+n_neurons.extend(list(reversed(n_neurons)))
+n_layers = n_layers * 2
+
+model = Sequential()
+
+# add input to first layer
+model.add(Dense(units=n_neurons[0], activation='relu', 
+                input_shape=(n_inputs,)))
+
+for i in range(1,n_layers):
+    model.add(Dense(units=n_neurons[i], activation='relu'))
+    
+# add last layer as output layer
+model.add(Dense(units=n_outputs, activation='linear'))
+model.summary()
+
+model.compile(loss='mse',
+              optimizer=keras.optimizers.Adam(lr=learning_rate),
+              metrics=['accuracy'])
+
+model.fit(X_train, X_train,
+                    batch_size=batch_size,
+                    epochs=n_epochs)
+
+Y_train_pred = model.predict(train_images)
+Y_test_pred = model.predict(test_images)
+
+
+# In[23]:
+
+
+mnist.train.num_examples
+
+
+# In[26]:
+
+
+DATASETSLIB_HOME = '../datasetslib'
+import sys
+if not DATASETSLIB_HOME in sys.path:
+    sys.path.append(DATASETSLIB_HOME)
+get_ipython().run_line_magic('reload_ext', 'autoreload')
+get_ipython().run_line_magic('autoreload', '2')
+import datasetslib
+
+datasetslib.datasets_root = os.path.join(os.path.expanduser('~'),'datasets')
+
+from tensorflow.examples.tutorials.mnist import input_data
+dataset_home = os.path.join(datasetslib.datasets_root,'mnist') 
+mnist = input_data.read_data_sets(dataset_home,one_hot=False)
+
