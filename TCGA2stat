@@ -1,0 +1,142 @@
+source("https://bioconductor.org/biocLite.R")
+biocLite("CNTools")
+install.packages("TCGA2STAT")
+library("TCGA2STAT")
+### need to install CCA
+m <- getTCGA(disease="LUSC",data.type="Methylation")
+r <- getTCGA(disease="LUSC",data.type="RNASeq2",clinical = TRUE)
+met.var <- apply(m,met.var>=quantile(met.var,0.99,na.rm=T)&!is.na(met.var))
+rnaseq_age.ov <- getTCGA(disease="OV", data.type="RNASeq", type="RPKM", clinical=TRUE, cvars="yearstobirth")
+counts.ov <- getTCGA(disease="OV", data.type="RNASeq", type="count")
+mir.ov <- getTCGA(disease="OV", data.type="miRNA_Array")
+mut.ov <- getTCGA(disease="OV", data.type="Mutation", type="somatic")
+allmut.ov <- getTCGA(disease="OV", data.type="Mutation", type="all")
+# Get SNP array CNA for ovarian cancer patients
+cnasnp <- getTCGA(disease="OV", data.type="CNA_SNP")
+### merge data
+merged.lusc <- OMICSBind(dat1 = m$dat, dat2 = r$dat)
+## perform CCA 
+#Example: Canonical correlation analysis
+# Get data
+lusc.methyl <- getTCGA(disease="LUSC", data.type="Methylation")
+lusc.rnaseq2 <- getTCGA(disease="LUSC", data.type="RNASeq2", clinical=TRUE)
+#To reduce computation time, we only include CpG sites and genes that are at the top 1% of variance across patients:
+# Filter data
+met.var <- apply(lusc.methyl$dat, 1, var)
+met.data <- subset(lusc.methyl$dat, met.var >= quantile(met.var, 0.99, na.rm=T) & !is.na(met.var))
+rnaseq2.var <- apply(log10(1+lusc.rnaseq2$dat), 1, var)
+rnaseq.data <- subset(log10(1+lusc.rnaseq2$dat), rnaseq2.var >= quantile(rnaseq2.var, 0.99, na.rm=T) & !is.na(rnaseq2.var))
+met.rnaseq2 <- OMICSBind(dat1 = rnaseq.data, dat2= met.data)
+library(CCA)
+# run regularized-cca
+lusc.cc <- rcc(t(met.rnaseq2$X), t(met.rnaseq2$Y), 0.75025, 0.5005)
+# compute the canonical loadings 
+lusc.cc2 <- comput(t(met.rnaseq2$X), t(met.rnaseq2$Y), lusc.cc)
+#We can visualize the results of the analysis. In order to generate plots shown in our paper, we wrote plotting functions that can be found here: script. First, we visualize how the gene expression profiles correlate with the methylation profiles:
+plotNice2 <- function(cc2, d1, d2, XY="X", cex=0.7){
+  
+  plot(1, type="n", xlab=paste("loading ", d1, sep=""), ylab=paste("loading ", d2, sep=""), xlim=c(-1,1), ylim=c(-1,1))
+  draw.circle(0, 0, 1, col="black")
+  draw.circle(0, 0, 0.5, col="black")
+  abline(v=0)
+  abline(h=0)
+  
+  gidx <- c()
+  if(XY=="X"){
+    for(i in 1:nrow(cc2$corr.X.xscores)){
+      x <- cc2$corr.X.xscores[i,d1]
+      y <- cc2$corr.X.xscores[i,d2]
+      
+      rs <- x**2 + y**2
+      
+      if(rs >= 0.5**2){
+        gidx <- c(gidx, i)        
+        text(x=x, y=y, labels=as.character(rownames(cc2$corr.X.xscores)[i]), cex=cex, font=2)
+      }
+      if(rs < 0.5**2){
+        points(x,y,pch=20, cex=cex, col="gray")
+      }
+    }  
+  }
+  if(XY=="Y"){
+    for(i in 1:nrow(cc2$corr.Y.xscores)){
+      x <- cc2$corr.Y.xscores[i,d1]
+      y <- cc2$corr.Y.xscores[i,d2]
+      
+      rs <- x**2 + y**2
+      
+      if(rs >= 0.5**2){
+        gidx <- c(gidx, i)
+        text(x=x, y=y, labels=as.character(rownames(cc2$corr.Y.xscores)[i]), cex=cex, font=2)
+      }
+      if(rs < 0.5**2){
+        points(x,y,pch=20, cex=cex, col="gray")
+      }
+    }  
+  }
+}
+# ---
+draw.circle <- function (x, y, r, col) {
+  lines(cos(seq(0, 2 * pi, pi/180)) * r + x, sin(seq(0, 2 * 
+                                                       pi, pi/180)) * r + y, col = col)
+}
+# ---
+plotNice2.indiv <- function(cc2, d1, d2,cex=0.7,cols=NULL, pchs=NULL){
+  
+  temp = range(cc2$xscores[,d1:d2])
+  lims = c(floor(temp[1]), ceiling(temp[2]))
+  
+  plot(1, type="n", xlab=paste("Dimension ", d1, sep=""), ylab=paste("Dimension ", d2, sep=""), xlim=lims, ylim=lims)
+  abline(v=0, lty=3)
+  abline(h=0, lty=3)
+  if(is.null(cols)){
+    if(is.null(pchs)){
+      text(cc2$xscores[, d1], cc2$xscores[, d2], rownames(cc2$xscores), cex=cex)}
+    else{
+      points(cc2$xscores[, d1], cc2$xscores[, d2], cex=cex, pch=pchs)}
+  }
+  else{
+    if(is.null(pchs)){
+      text(cc2$xscores[, d1], cc2$xscores[, d2], rownames(cc2$xscores), cex=cex, col=cols)}
+    else{points(cc2$xscores[, d1], cc2$xscores[, d2], cex=cex, col=cols, pch=pchs)}
+  }
+}
+# ----
+mypamr.plotsurvival <- function (group, survival.time, censoring.status, cols, lty, lwd) 
+{
+  require(survival)
+  n.class <- length(unique(group))
+  junk <- survfit(Surv(survival.time, censoring.status) ~ as.factor(group))
+  junk2 <- coxph(Surv(survival.time, censoring.status) ~ as.factor(group))
+  pv <- 1 - pchisq(2 * (junk2$loglik[2] - junk2$loglik[1]), 
+                   df = n.class - 1)
+  plot(junk, col = cols, xlab = "Years", ylab = "Probability of survival", lty=lty, lwd=lwd)
+  legend(0.01 * max(survival.time), 0.2, col = cols, lty = lty, lwd=lwd, legend = as.character(1:n.class), box.lwd=1)
+  text(0.1 * max(survival.time), 0.25, paste("p =", as.character(round(pv, 4))), cex=0.8)
+  return()
+}
+#
+plotNice2(lusc.cc2, d1=1, d2=2, XY="X", cex=0.7)
+lusc.cc=rcc(merged.lusc$X,t(merged.lusc$Y),0.75025,0.5005)
+plotNice2(lusc.cc2, d1=1, d2=2, XY="Y", cex=0.7)
+plt.indiv(lusc.cc, d1=1, d2=2, ind.names=rep("+", nrow(t(met.rnaseq2$X))))
+score <- lusc.cc2$xscores[,1:2]
+# Parameters were estimated based on visual inspection
+grp1 <- rownames(score)[(score[,1]<0 & score[,2]<0) | (score[,1]>0 & score[,2]< -1.5)]
+grp2 <- setdiff(rownames(score), grp1)
+grp <- ifelse(rownames(score) %in% grp1, 1, 2)
+# Get survival data from the imported RNASeq2 object
+os.score <- lusc.rnaseq2$merged.dat[,1:3]
+colors = colors()[c(153,220)]
+plotNice2.indiv(lusc.cc2, d1=1, d2=2, cols=colors[grp], cex=2.5,pchs=c(20,20)[grp])
+os.score <- lusc.rnaseq2$merged.dat[,1:3]
+
+# prepare the data to make sure they match the two clusters from above
+os <- os.score[,-1]
+rownames(os) <- os.score[,1]
+os <- os[rownames(lusc.cc2$xscores),]
+plotdat <- data.frame(grp, os)
+plotdat <- plotdat[order(plotdat[,1]),]
+
+# KM-plot
+mypamr.plotsurvival(plotdat[,1], plotdat[,3]/365, plotdat[,2], c(colors()[c(153,220)]), lty=c(2,1), lwd=c(2,2))
