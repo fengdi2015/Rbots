@@ -1,0 +1,27 @@
+#### TO CONVERT A LIST OF EXP FILES TO STANDARD FORMATE
+library(plyr)
+library(stringr)
+library(biomaRt)
+## find the file list in toy datasets
+files.name <- list.files();
+mylist <- llply(files.name, read.delim2);
+data <- Reduce(function(x,y) merge(x,y,by="ID"), mylist, accumulate = F);
+## use filename as colname using regular exp, remove underscore
+nm0=sub("_","",mylist)
+nm1=substring(nm0,1,10)
+colnames(data) <- c("ID",nm1)
+genesid=data$ID;
+## convert to gene symbol if needed
+G.S=getBM(filters="ensembl_gene_id",attributes = "hgnc_symbol",vlues=genesid,mart=mart)
+m.data <- merge(data,G.S,by.x="ID",by.y="ensembl_gene_id")
+m.data$Gene.Symbol <- m.data$hgnc_symbol
+m.data$hgnc_symbol <- NULL
+## duplicated genes
+agt.data <- aggregate(.~Gene.Symbol, m.data, FUN=sum, na.rm=FALSE)
+agt.data$Ref_ID=agt.data$Gene.Symbol
+col.idx=grep("ID_Ref",names(agt.data))
+f.data <- agt.data[,c(c(col.idx),(1:ncol(agt.data))[-col.idx])]
+write.csv(f.data,"expression.txt", row.names = FALSE )
+########### the previous block is to convert GEO sample file based expression table to  gene expression matrix table 
+## metadata
+
