@@ -1,0 +1,45 @@
+# If you have network access, the more typical way to do this
+# would be to use this:
+require(GEOquery)
+gds <- getGEO("GSE107585")
+#eset <- GDS2eSet(gds)
+### check meta
+gds[[1]]@phenoData@data
+## expression matrix
+exp=read.delim2("10data/Mouse_kidney_single_cell_datamatrix.txt")
+library(feather)
+library(tibble)
+#https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE102580
+df <- read.table(file = '10data/GSE102580_filtered_normalized_counts_human.tsv', sep = '\t', header = TRUE)
+path <- "10data/expression.feather"
+write_feather(df, path)
+df <- read_feather(path)
+meta <- read.table(file="10data/GSE102580_meta_GSE102580_filtered_counts_human.tsv",sep="\t",header=TRUE)
+############# importing finished #####################
+#coerce to a plain data frame via as.data.frame()
+sampleid=paste0("X",meta$X)
+meta$Sampleid=sampleid
+colnames(meta)=c("Indx","Fname","Barcode","Donor","Umi","Mito","D1","D2","Cluster","Sampleid")
+rownames(meta)=meta$Sampleid
+m=as_tibble(meta)
+#remove_rownames(m)
+#column_to_rownames(m, var = "Sampleid")
+require(ggplot2)
+### plot cluster tsne ##########
+#### query gene of interest ##########
+### positive as red & plus donor information
+goi="MUC1";
+df2 <- df[which(df$X%in%goi),]
+df3 <- as_tibble(cbind(nms = names(df2), t(df2)))
+mydata=df3[-c(1), ]
+d=merge(mydata,m,by.x="nms",by.y="Sampleid")
+d$Color="po"
+d[d$Donor=="donor1",]$Color="p1"
+d[d$Donor=="donor2",]$Color="p2"
+pos_pts=d[d$V1>2,]
+g <- ggplot(d,aes(D1,D2,colour=Color))+xlab("tsne D1")+ylab("tsne D2")+
+  geom_point(size=2,stroke=0,alpha=0.7,shape=16)+
+  geom_point(data=pos_pts, size=2,stroke=0, alpha=1,shape=16,color="red")+
+  guides(fill=guide_legend(title="Donors"))
+g+scale_color_manual(values=c("steelblue","azure3","green"))
+
